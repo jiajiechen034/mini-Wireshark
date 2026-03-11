@@ -1,0 +1,5 @@
+[project]
+name = "minishark"
+version = "0.1.0"
+description = "A lightweight packet analyzer built in Python"
+requires-python = ">=3.10"
