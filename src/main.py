@@ -2,23 +2,10 @@ import argparse
 from capture import start_capture
 
 def build_parser():
-    parser = argparse.ArgumentParser(
-        prog="wireshark",
-    )
-
-    parser.add_argument(
-        "--interface",
-    )
-    parser.add_argument(
-        "--count",
-        type=int,
-        default=0,
-    )
-    parser.add_argument(
-        "--protocol",
-        choices=["tcp", "udp", "icmp"],
-    )
-
+    parser = argparse.ArgumentParser(prog="wireshark")
+    parser.add_argument("--interface")
+    parser.add_argument("--count", type=int, default=0,)
+    parser.add_argument("--protocol", choices=["tcp", "udp", "icmp", "arp"])
     return parser
 
 
