@@ -1,5 +1,6 @@
 import sys
 import csv
+from scapy.all import wrpcap
 from PyQt5.QtWidgets import (
     QApplication,
     QMainWindow,
@@ -20,7 +21,10 @@ from PyQt5.QtWidgets import (
 )
 from PyQt5.QtCore import QThread, QTimer
 from sniffer import Sniffer
-
+from scapy.layers.l2 import Ether, ARP
+from scapy.layers.inet import IP, TCP, UDP, ICMP
+from scapy.layers.inet6 import IPv6
+from scapy.layers.dns import DNS, DNSRR
 
 class GUIWindow(QMainWindow):
     def __init__(self):
@@ -60,6 +64,7 @@ class GUIWindow(QMainWindow):
         self.start_button = QPushButton("Start")
         self.stop_button = QPushButton("Stop")
         self.save_button = QPushButton("Save")
+        self.save_pcap_button = QPushButton("Save PCAP")
         self.apply_filter_button = QPushButton("Apply Filter")
 
         controls_layout.addWidget(QLabel("Interface:"))
@@ -74,6 +79,7 @@ class GUIWindow(QMainWindow):
         controls_layout.addWidget(self.start_button)
         controls_layout.addWidget(self.stop_button)
         controls_layout.addWidget(self.save_button)
+        controls_layout.addWidget(self.save_pcap_button)
 
         controls_layout.addWidget(QLabel("Search:"))
         controls_layout.addWidget(self.display_filter_input)
@@ -119,11 +125,13 @@ class GUIWindow(QMainWindow):
 
         self.stop_button.setEnabled(False)
         self.save_button.setEnabled(False)
+        self.save_pcap_button.setEnabled(False)
 
         self.start_button.clicked.connect(self.on_start_clicked)
         self.stop_button.clicked.connect(self.on_stop_clicked)
         self.save_button.clicked.connect(self.on_save_clicked)
         self.apply_filter_button.clicked.connect(self.on_filter_clicked)
+        self.save_pcap_button.clicked.connect(self.on_save_pcap_clicked)
 
     def on_start_clicked(self):
         self.table.setRowCount(0)
@@ -158,6 +166,7 @@ class GUIWindow(QMainWindow):
         self.start_button.setEnabled(False)
         self.stop_button.setEnabled(True)
         self.save_button.setEnabled(False)
+        self.save_pcap_button.setEnabled(False)
 
         self.thread.start()
 
@@ -216,6 +225,40 @@ class GUIWindow(QMainWindow):
         except Exception as e:
             QMessageBox.critical(self, "Save Error", str(e))
 
+    def on_save_pcap_clicked(self):
+        packets_to_save = self.filtered_packets if self.filtered_packets else self.packets
+
+        if not packets_to_save:
+            QMessageBox.information(self, "No Data", "There are no packets to save.")
+            return
+
+        path, _ = QFileDialog.getSaveFileName(
+            self,
+            "Save Capture as PCAP",
+            "capture.pcap",
+            "PCAP Files (*.pcap)"
+        )
+
+        if not path:
+            return
+
+        try:
+            raw_packets = []
+            for packet in packets_to_save:
+                raw_packet = packet.get("raw_packet")
+                if raw_packet is not None:
+                    raw_packets.append(raw_packet)
+
+            if not raw_packets:
+                QMessageBox.information(self, "No Raw Packets", "No raw packets are available to save.")
+                return
+
+            wrpcap(path, raw_packets)
+            QMessageBox.information(self, "Saved", f"PCAP saved to:\n{path}")
+
+        except Exception as e:
+            QMessageBox.critical(self, "Save Error", str(e))
+
     def on_filter_clicked(self):
         text = self.display_filter_input.text().strip().lower()
 
@@ -248,25 +291,125 @@ class GUIWindow(QMainWindow):
         self.detail_box.setText(self.format_packet_details(packet))
     
     def format_packet_details(self, packet):
+        raw = packet.get("raw_packet")
         lines = []
 
         lines.append(f"Frame {packet['number']}")
         lines.append(f"Time: {packet['time']} s")
-        lines.append(f"Protocol: {packet['protocol']}")
+        lines.append(f"Captured Length: {packet['length']} bytes")
         lines.append("")
 
-        lines.append("=== Network ===")
-        lines.append(f"Source: {packet['src']}")
-        lines.append(f"Destination: {packet['dst']}")
-        lines.append("")
+        if raw is None:
+            lines.append("No raw packet data available.")
+            return "\n".join(lines)
 
-        lines.append("=== Transport ===")
-        lines.append(f"Source Port: {packet['sport']}")
-        lines.append(f"Destination Port: {packet['dport']}")
-        lines.append(f"Length: {packet['length']}")
-        lines.append("")
+        if raw.haslayer(Ether):
+            eth = raw[Ether]
+            lines.append("=== Ethernet ===")
+            lines.append(f"Source MAC: {eth.src}")
+            lines.append(f"Destination MAC: {eth.dst}")
+            lines.append(f"Type: {eth.type}")
+            lines.append("")
 
-        lines.append("=== Info ===")
+        if raw.haslayer(ARP):
+            arp = raw[ARP]
+            op_text = "Request" if arp.op == 1 else "Reply" if arp.op == 2 else str(arp.op)
+
+            lines.append("=== ARP ===")
+            lines.append(f"Opcode: {op_text}")
+            lines.append(f"Sender MAC: {arp.hwsrc}")
+            lines.append(f"Sender IP: {arp.psrc}")
+            lines.append(f"Target MAC: {arp.hwdst}")
+            lines.append(f"Target IP: {arp.pdst}")
+            lines.append("")
+
+        if raw.haslayer(IP):
+            ip = raw[IP]
+            lines.append("=== IPv4 ===")
+            lines.append(f"Source: {ip.src}")
+            lines.append(f"Destination: {ip.dst}")
+            lines.append(f"Version: {ip.version}")
+            lines.append(f"IHL: {ip.ihl}")
+            lines.append(f"TTL: {ip.ttl}")
+            lines.append(f"Protocol: {ip.proto}")
+            lines.append(f"Total Length: {ip.len}")
+            lines.append("")
+
+        elif raw.haslayer(IPv6):
+            ip6 = raw[IPv6]
+            lines.append("=== IPv6 ===")
+            lines.append(f"Source: {ip6.src}")
+            lines.append(f"Destination: {ip6.dst}")
+            lines.append(f"Version: {ip6.version}")
+            lines.append(f"Hop Limit: {ip6.hlim}")
+            lines.append(f"Next Header: {ip6.nh}")
+            lines.append("")
+
+        if raw.haslayer(TCP):
+            tcp = raw[TCP]
+            flags = tcp.sprintf("%TCP.flags%")
+
+            lines.append("=== TCP ===")
+            lines.append(f"Source Port: {tcp.sport}")
+            lines.append(f"Destination Port: {tcp.dport}")
+            lines.append(f"Sequence Number: {tcp.seq}")
+            lines.append(f"Acknowledgment Number: {tcp.ack}")
+            lines.append(f"Window Size: {tcp.window}")
+            lines.append(f"Flags: {flags}")
+            lines.append(f"Payload Length: {len(bytes(tcp.payload)) if tcp.payload else 0}")
+            lines.append("")
+
+        elif raw.haslayer(UDP):
+            udp = raw[UDP]
+            lines.append("=== UDP ===")
+            lines.append(f"Source Port: {udp.sport}")
+            lines.append(f"Destination Port: {udp.dport}")
+            lines.append(f"Length: {udp.len}")
+            lines.append("")
+
+        elif raw.haslayer(ICMP):
+            icmp = raw[ICMP]
+            lines.append("=== ICMP ===")
+            lines.append(f"Type: {icmp.type}")
+            lines.append(f"Code: {icmp.code}")
+
+            icmp_id = getattr(icmp, "id", None)
+            icmp_seq = getattr(icmp, "seq", None)
+            if icmp_id is not None:
+                lines.append(f"Identifier: {icmp_id}")
+            if icmp_seq is not None:
+                lines.append(f"Sequence: {icmp_seq}")
+            lines.append("")
+
+        if raw.haslayer(DNS):
+            dns = raw[DNS]
+            lines.append("=== DNS ===")
+            lines.append(f"Transaction ID: {dns.id}")
+            lines.append(f"QR: {'Response' if dns.qr else 'Query'}")
+            lines.append(f"Questions: {dns.qdcount}")
+            lines.append(f"Answers: {dns.ancount}")
+
+            if dns.qd is not None:
+                qname = dns.qd.qname
+                if isinstance(qname, bytes):
+                    qname = qname.decode(errors="ignore")
+                qname = qname.rstrip(".")
+                lines.append(f"Query Name: {qname}")
+                lines.append(f"Query Type: {dns.qd.qtype}")
+
+            if dns.an is not None and dns.ancount > 0:
+                lines.append("Answer Data:")
+                answer = dns.an
+                count = 0
+                while isinstance(answer, DNSRR) and count < dns.ancount:
+                    if hasattr(answer, "rdata"):
+                        lines.append(f"  - {answer.rdata}")
+                    answer = answer.payload
+                    count += 1
+
+            lines.append("")
+
+        lines.append("=== Summary ===")
         lines.append(packet["info"])
 
         return "\n".join(lines)
@@ -306,6 +449,7 @@ class GUIWindow(QMainWindow):
         self.start_button.setEnabled(True)
         self.stop_button.setEnabled(False)
         self.save_button.setEnabled(True)
+        self.save_pcap_button.setEnabled(True)
         self.thread = None
         self.sniffer = None
 
@@ -362,7 +506,6 @@ class GUIWindow(QMainWindow):
                 item = QTableWidgetItem(str(value))
                 item.setToolTip(str(value))
                 self.table.setItem(row, col, item)
-
 
 if __name__ == "__main__":
     app = QApplication(sys.argv)

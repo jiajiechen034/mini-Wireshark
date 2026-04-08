@@ -1,7 +1,7 @@
 import time
 from scapy.layers.inet import IP, TCP, UDP, ICMP
 from scapy.layers.inet6 import IPv6
-from scapy.layers.l2 import ARP
+from scapy.layers.l2 import ARP, Ether
 from scapy.layers.dns import DNS, DNSRR
 
 
@@ -19,7 +19,6 @@ class PacketContext:
         elapsed = time.time() - self.start_time
         timestamp = f"{elapsed:.3f}"
         return self.packet_count, timestamp
-
 
 def parse_arp(packet, context):
     number, timestamp = context.next_packet_info()
@@ -42,8 +41,8 @@ def parse_arp(packet, context):
         "dport": "-",
         "length": len(packet),
         "info": info,
+        "raw_packet": packet,
     }
-
 
 def build_base_packet(packet, protocol, context):
     number, timestamp = context.next_packet_info()
@@ -68,8 +67,8 @@ def build_base_packet(packet, protocol, context):
         "dport": "-",
         "length": len(packet),
         "info": "",
+        "raw_packet": packet,
     }
-
 
 def decode_tcp_flags(flags_str):
     mapping = {
@@ -81,7 +80,6 @@ def decode_tcp_flags(flags_str):
         "U": "URG",
     }
     return ", ".join(mapping.get(ch, ch) for ch in flags_str)
-
 
 def parse_tcp(packet, context):
     p = build_base_packet(packet, "TCP", context)
@@ -104,7 +102,6 @@ def parse_tcp(packet, context):
 
     return p
 
-
 def decode_dns_type(qtype):
     mapping = {
         1: "A",
@@ -119,7 +116,6 @@ def decode_dns_type(qtype):
         65: "HTTPS",
     }
     return mapping.get(qtype, str(qtype))
-
 
 def get_dns_answer_text(dns):
     if dns.ancount == 0 or dns.an is None:
@@ -144,7 +140,6 @@ def get_dns_answer_text(dns):
         pass
 
     return ", ".join(answers)
-
 
 def parse_udp(packet, context):
     p = build_base_packet(packet, "UDP", context)
@@ -182,7 +177,6 @@ def parse_udp(packet, context):
     p["info"] = f"{udp.sport} → {udp.dport} Len={udp.len}"
     return p
 
-
 def decode_icmp(icmp_type, icmp_code):
     if icmp_type == 8 and icmp_code == 0:
         return "Echo Request"
@@ -202,7 +196,6 @@ def decode_icmp(icmp_type, icmp_code):
     else:
         return f"type={icmp_type} code={icmp_code}"
 
-
 def parse_icmp(packet, context):
     p = build_base_packet(packet, "ICMP", context)
     icmp = packet[ICMP]
@@ -218,7 +211,6 @@ def parse_icmp(packet, context):
 
     p["info"] = info
     return p
-
 
 def parse_packet(packet, context):
     if packet.haslayer(ARP):
